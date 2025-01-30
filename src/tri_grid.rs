@@ -8,7 +8,7 @@ use numpy::ndarray::*;
 #[derive(Clone)]
 pub struct TriGrid {
     pub cellsize: f64,
-    pub offset: (f64, f64),
+    pub offset: [f64; 2],
     pub _rotation: f64,
     pub _rotation_matrix: Array2<f64>,
     pub _rotation_matrix_inv: Array2<f64>,
@@ -21,24 +21,48 @@ impl GridTraits for TriGrid {
     fn dy(&self) -> f64 {
         self.cell_height()
     }
-    fn offset(&self) -> (f64, f64) {
+
+    fn set_cellsize(&mut self, cellsize: f64) {
+        self.cellsize = cellsize;
+    }
+
+    fn offset(&self) -> [f64; 2] {
         self.offset
     }
-    fn radius(&self) -> f64 {
-        2. / 3. * self.cell_height()
+    fn set_offset(&mut self, offset: [f64; 2]) {
+        self.offset = normalize_offset(offset, self.cell_width(), self.cell_height());
     }
+
     fn rotation(&self) -> f64 {
         self._rotation
     }
-    fn rotation_matrix(&self) -> Array2<f64> {
-        self._rotation_matrix.clone()
+    fn set_rotation(&mut self, rotation: f64) {
+        self._rotation = rotation;
+        self._rotation_matrix = rotation_matrix_from_angle(rotation);
+        self._rotation_matrix_inv = rotation_matrix_from_angle(-rotation);
     }
-    fn rotation_matrix_inv(&self) -> Array2<f64> {
-        self._rotation_matrix_inv.clone()
+    fn rotation_matrix(&self) -> &Array2<f64> {
+        &self._rotation_matrix
     }
-    fn centroid_xy_no_rot(&self, x: i64, y: i64) -> (f64, f64) {
-        let centroid_x = x as f64 * self.dx() + self.dx() + self.offset.0;
-        let mut centroid_y = y as f64 * self.dy() + (self.dy() / 2.) + self.offset.1;
+    fn rotation_matrix_inv(&self) -> &Array2<f64> {
+        &self._rotation_matrix_inv
+    }
+
+    fn radius(&self) -> f64 {
+        2. / 3. * self.cell_height()
+    }
+
+    fn cell_height(&self) -> f64 {
+        self.dx() * (3_f64).sqrt()
+    }
+
+    fn cell_width(&self) -> f64 {
+        self.cellsize
+    }
+
+    fn centroid_xy_no_rot(&self, x: i64, y: i64) -> [f64; 2] {
+        let centroid_x = x as f64 * self.dx() + self.dx() + self.offset[0];
+        let mut centroid_y = y as f64 * self.dy() + (self.dy() / 2.) + self.offset[1];
 
         let vertical_offset = self.radius() - 0.5 * self.dy();
         if iseven(x) == iseven(y) {
@@ -47,15 +71,15 @@ impl GridTraits for TriGrid {
             centroid_y = centroid_y + vertical_offset;
         }
 
-        (centroid_x, centroid_y)
+        [centroid_x, centroid_y]
     }
     fn centroid(&self, index: &ArrayView2<i64>) -> Array2<f64> {
         let mut centroids = Array2::<f64>::zeros((index.shape()[0], 2));
 
         for cell_id in 0..centroids.shape()[0] {
             let point = self.centroid_xy_no_rot(index[Ix2(cell_id, 0)], index[Ix2(cell_id, 1)]);
-            centroids[Ix2(cell_id, 0)] = point.0;
-            centroids[Ix2(cell_id, 1)] = point.1;
+            centroids[Ix2(cell_id, 0)] = point[0];
+            centroids[Ix2(cell_id, 1)] = point[1];
         }
 
         if self.rotation() != 0. {
@@ -68,86 +92,18 @@ impl GridTraits for TriGrid {
 
         centroids
     }
-}
-impl TriGrid {
-    pub fn new(cellsize: f64, offset: (f64, f64), rotation: f64) -> Self {
-        let _rotation_matrix = rotation_matrix_from_angle(rotation);
-        let _rotation_matrix_inv = rotation_matrix_from_angle(-rotation);
-        // TODO: Find a way to normalize_offset without having to instantiate tmp object
-        let _rotation = rotation;
-        let self_tmp = TriGrid {
-            cellsize,
-            offset,
-            _rotation,
-            _rotation_matrix,
-            _rotation_matrix_inv,
-        };
-        let offset = normalize_offset(offset, self_tmp.cell_width(), self_tmp.cell_height());
-        let _rotation_matrix = rotation_matrix_from_angle(rotation);
-        let _rotation_matrix_inv = rotation_matrix_from_angle(-rotation);
-        TriGrid {
-            cellsize,
-            offset,
-            _rotation,
-            _rotation_matrix,
-            _rotation_matrix_inv,
-        }
-    }
 
-    pub fn cell_height(&self) -> f64 {
-        self.dx() * (3_f64).sqrt()
-    }
-
-    pub fn cell_width(&self) -> f64 {
-        self.cellsize
-    }
-
-    pub fn cell_corners(&self, index: &ArrayView2<i64>) -> Array3<f64> {
-        let mut corners = Array3::<f64>::zeros((index.shape()[0], 3, 2));
-
-        for cell_id in 0..corners.shape()[0] {
-            let (centroid_x, centroid_y) =
-                self.centroid_xy_no_rot(index[Ix2(cell_id, 0)], index[Ix2(cell_id, 1)]);
-            if iseven(index[Ix2(cell_id, 0)]) == iseven(index[Ix2(cell_id, 1)]) {
-                corners[Ix3(cell_id, 0, 0)] = centroid_x;
-                corners[Ix3(cell_id, 0, 1)] = centroid_y + self.radius();
-                corners[Ix3(cell_id, 1, 0)] = centroid_x + self.dx();
-                corners[Ix3(cell_id, 1, 1)] = centroid_y - (self.cell_height() - self.radius());
-                corners[Ix3(cell_id, 2, 0)] = centroid_x - self.dx();
-                corners[Ix3(cell_id, 2, 1)] = centroid_y - (self.cell_height() - self.radius());
-            } else {
-                corners[Ix3(cell_id, 0, 0)] = centroid_x;
-                corners[Ix3(cell_id, 0, 1)] = centroid_y - self.radius();
-                corners[Ix3(cell_id, 1, 0)] = centroid_x + self.dx();
-                corners[Ix3(cell_id, 1, 1)] = centroid_y + (self.cell_height() - self.radius());
-                corners[Ix3(cell_id, 2, 0)] = centroid_x - self.dx();
-                corners[Ix3(cell_id, 2, 1)] = centroid_y + (self.cell_height() - self.radius());
-            }
-        }
-
-        if self.rotation() != 0. {
-            for cell_id in 0..corners.shape()[0] {
-                for corner_id in 0..corners.shape()[1] {
-                    let mut corner_xy = corners.slice_mut(s![cell_id, corner_id, ..]);
-                    let rotated_corner_xy = self._rotation_matrix.dot(&corner_xy);
-                    corner_xy.assign(&rotated_corner_xy);
-                }
-            }
-        }
-        corners
-    }
-
-    pub fn cell_at_point(&self, points: &ArrayView2<f64>) -> Array2<i64> {
+    fn cell_at_point(&self, points: &ArrayView2<f64>) -> Array2<i64> {
         let mut index = Array2::<i64>::zeros((points.shape()[0], 2));
         for cell_id in 0..points.shape()[0] {
             let point = points.slice(s![cell_id, ..]);
             let point = self._rotation_matrix_inv.dot(&point);
             index[Ix2(cell_id, 0)] =
-                (1. + (point[Ix1(0)] - self.offset.0) / self.dx()).floor() as i64;
+                (1. + (point[Ix1(0)] - self.offset[0]) / self.dx()).floor() as i64;
             index[Ix2(cell_id, 1)] =
-                ((point[Ix1(1)] - self.offset.1) / self.cell_height()).floor() as i64;
+                ((point[Ix1(1)] - self.offset[1]) / self.cell_height()).floor() as i64;
             index[Ix2(cell_id, 0)] = 2
-                * ((point[Ix1(0)] - self.offset.0
+                * ((point[Ix1(0)] - self.offset[0]
                     + self.dx() * !iseven(index[Ix2(cell_id, 1)]) as i64 as f64)
                     / self.cell_width())
                 .floor() as i64
@@ -193,6 +149,141 @@ impl TriGrid {
         index
     }
 
+    fn cell_corners(&self, index: &ArrayView2<i64>) -> Array3<f64> {
+        let mut corners = Array3::<f64>::zeros((index.shape()[0], 3, 2));
+
+        for cell_id in 0..corners.shape()[0] {
+            let [centroid_x, centroid_y] =
+                self.centroid_xy_no_rot(index[Ix2(cell_id, 0)], index[Ix2(cell_id, 1)]);
+            if iseven(index[Ix2(cell_id, 0)]) == iseven(index[Ix2(cell_id, 1)]) {
+                corners[Ix3(cell_id, 0, 0)] = centroid_x;
+                corners[Ix3(cell_id, 0, 1)] = centroid_y + self.radius();
+                corners[Ix3(cell_id, 1, 0)] = centroid_x + self.dx();
+                corners[Ix3(cell_id, 1, 1)] = centroid_y - (self.cell_height() - self.radius());
+                corners[Ix3(cell_id, 2, 0)] = centroid_x - self.dx();
+                corners[Ix3(cell_id, 2, 1)] = centroid_y - (self.cell_height() - self.radius());
+            } else {
+                corners[Ix3(cell_id, 0, 0)] = centroid_x;
+                corners[Ix3(cell_id, 0, 1)] = centroid_y - self.radius();
+                corners[Ix3(cell_id, 1, 0)] = centroid_x + self.dx();
+                corners[Ix3(cell_id, 1, 1)] = centroid_y + (self.cell_height() - self.radius());
+                corners[Ix3(cell_id, 2, 0)] = centroid_x - self.dx();
+                corners[Ix3(cell_id, 2, 1)] = centroid_y + (self.cell_height() - self.radius());
+            }
+        }
+
+        if self.rotation() != 0. {
+            for cell_id in 0..corners.shape()[0] {
+                for corner_id in 0..corners.shape()[1] {
+                    let mut corner_xy = corners.slice_mut(s![cell_id, corner_id, ..]);
+                    let rotated_corner_xy = self._rotation_matrix.dot(&corner_xy);
+                    corner_xy.assign(&rotated_corner_xy);
+                }
+            }
+        }
+        corners
+    }
+
+    fn cells_near_point(&self, points: &ArrayView2<f64>) -> Array3<i64> {
+        let mut nearby_cells = Array3::<i64>::zeros((points.shape()[0], 6, 2));
+        // TODO:
+        // Condense this into a single loop
+        let cell_ids = self.cell_at_point(points);
+        let corners = self.cell_corners(&cell_ids.view());
+
+        if self.rotation() != 0. {
+            let mut points = points.to_owned();
+            for cell_id in 0..points.shape()[0] {
+                let mut point = points.slice_mut(s![cell_id, ..]);
+                let point_rot = self._rotation_matrix_inv.dot(&point);
+                point.assign(&point_rot);
+            }
+        }
+
+        // Define arguments to be used when determining the minimum distance
+        let mut min_dist: f64 = 0.;
+        let mut nearest_corner_id: usize = 0;
+        for cell_id in 0..corners.shape()[0] {
+            // - compute id of min distance
+            for corner_id in 0..corners.shape()[1] {
+                let x = corners[Ix3(cell_id, corner_id, 0)];
+                let y = corners[Ix3(cell_id, corner_id, 1)];
+                let dx = points[Ix2(cell_id, 0)] - x;
+                let dy = points[Ix2(cell_id, 1)] - y;
+                let distance = (dx.powi(2) + dy.powi(2)).powf(0.5);
+                if corner_id == 0 {
+                    nearest_corner_id = corner_id;
+                    min_dist = distance;
+                } else if distance <= min_dist {
+                    nearest_corner_id = corner_id;
+                    min_dist = distance;
+                }
+            }
+
+            // Define the relative ids of the nearby points with respect to the cell that contains the point
+            // The nearby cells will depend on which corner of the cell the point is located at, and
+            // whether the cell is pointing up or down.
+            let rel_nearby_cells: Array2<i64>;
+            if !self._is_cell_upright(cell_ids[Ix2(cell_id, 0)], cell_ids[Ix2(cell_id, 1)]) {
+                // Triangle points upright
+                match nearest_corner_id {
+                    0 => {
+                        rel_nearby_cells =
+                            array![[-1, 0], [0, 0], [1, 0], [-1, -1], [0, -1], [1, -1],];
+                    }
+                    1 => {
+                        rel_nearby_cells = array![[0, 1], [1, 1], [2, 1], [0, 0], [1, 0], [2, 0],];
+                    }
+                    2 => {
+                        rel_nearby_cells =
+                            array![[-2, 1], [-1, 1], [0, 1], [-2, 0], [-1, 0], [0, 0],];
+                    }
+                    _ => {
+                        panic!("Invalid nearest corner id: {}. Expected the corner triangle ID to be any of (0,1,2)", nearest_corner_id);
+                    }
+                }
+            } else {
+                match nearest_corner_id {
+                    0 => {
+                        rel_nearby_cells =
+                            array![[-1, 1], [0, 1], [1, 1], [-1, 0], [0, 0], [1, 0],];
+                    }
+                    1 => {
+                        rel_nearby_cells =
+                            array![[0, 0], [1, 0], [2, 0], [0, -1], [1, -1], [2, -1],];
+                    }
+                    2 => {
+                        rel_nearby_cells =
+                            array![[-2, 0], [-1, 0], [0, 0], [-2, -1], [-1, -1], [0, -1],];
+                    }
+                    _ => {
+                        panic!("Invalid nearest corner id: {}. Expected the corner triangle ID to be any of (0,1,2)", nearest_corner_id);
+                    }
+                }
+            }
+            // Insert ids into return array for current cell_id
+            nearby_cells
+                .slice_mut(s![cell_id, .., ..])
+                .assign(&(rel_nearby_cells + cell_ids.slice(s![cell_id, ..]))); // Try inserting slice?
+        }
+
+        nearby_cells
+    }
+}
+
+impl TriGrid {
+    pub fn new(cellsize: f64) -> Self {
+        let _rotation_matrix = rotation_matrix_from_angle(0.);
+        let _rotation_matrix_inv = rotation_matrix_from_angle(-0.);
+        TriGrid {
+            cellsize,
+            offset: [0., 0.],
+            _rotation: 0.,
+            _rotation_matrix,
+            _rotation_matrix_inv,
+        }
+    }
+
     pub fn cells_in_bounds(&self, bounds: &(f64, f64, f64, f64)) -> (Array2<i64>, (usize, usize)) {
         // Get ids of the cells at diagonally opposing corners of the bounds
         // TODO: allow calling of cell_at_point with single point (tuple or 1d array)
@@ -220,7 +311,7 @@ impl TriGrid {
         let mut cell_id: usize = 0;
         for y in (miny..=maxy).rev() {
             for x in minx..=maxx {
-                let (centroid_x, centroid_y) = self.centroid_xy_no_rot(x, y);
+                let [centroid_x, centroid_y] = self.centroid_xy_no_rot(x, y);
                 if (centroid_x >= bounds.0) & // x > minx
                    (centroid_x < bounds.2) & // x < maxx
                    (centroid_y > bounds.1) & // y > miny
@@ -400,92 +491,6 @@ impl TriGrid {
         }
 
         relative_neighbours
-    }
-
-    pub fn cells_near_point(&self, points: &ArrayView2<f64>) -> Array3<i64> {
-        let mut nearby_cells = Array3::<i64>::zeros((points.shape()[0], 6, 2));
-        // TODO:
-        // Condense this into a single loop
-        let cell_ids = self.cell_at_point(points);
-        let corners = self.cell_corners(&cell_ids.view());
-
-        if self.rotation() != 0. {
-            let mut points = points.to_owned();
-            for cell_id in 0..points.shape()[0] {
-                let mut point = points.slice_mut(s![cell_id, ..]);
-                let point_rot = self._rotation_matrix_inv.dot(&point);
-                point.assign(&point_rot);
-            }
-        }
-
-        // Define arguments to be used when determining the minimum distance
-        let mut min_dist: f64 = 0.;
-        let mut nearest_corner_id: usize = 0;
-        for cell_id in 0..corners.shape()[0] {
-            // - compute id of min distance
-            for corner_id in 0..corners.shape()[1] {
-                let x = corners[Ix3(cell_id, corner_id, 0)];
-                let y = corners[Ix3(cell_id, corner_id, 1)];
-                let dx = points[Ix2(cell_id, 0)] - x;
-                let dy = points[Ix2(cell_id, 1)] - y;
-                let distance = (dx.powi(2) + dy.powi(2)).powf(0.5);
-                if corner_id == 0 {
-                    nearest_corner_id = corner_id;
-                    min_dist = distance;
-                } else if distance <= min_dist {
-                    nearest_corner_id = corner_id;
-                    min_dist = distance;
-                }
-            }
-
-            // Define the relative ids of the nearby points with respect to the cell that contains the point
-            // The nearby cells will depend on which corner of the cell the point is located at, and
-            // whether the cell is pointing up or down.
-            let rel_nearby_cells: Array2<i64>;
-            if !self._is_cell_upright(cell_ids[Ix2(cell_id, 0)], cell_ids[Ix2(cell_id, 1)]) {
-                // Triangle points upright
-                match nearest_corner_id {
-                    0 => {
-                        rel_nearby_cells =
-                            array![[-1, 0], [0, 0], [1, 0], [-1, -1], [0, -1], [1, -1],];
-                    }
-                    1 => {
-                        rel_nearby_cells = array![[0, 1], [1, 1], [2, 1], [0, 0], [1, 0], [2, 0],];
-                    }
-                    2 => {
-                        rel_nearby_cells =
-                            array![[-2, 1], [-1, 1], [0, 1], [-2, 0], [-1, 0], [0, 0],];
-                    }
-                    _ => {
-                        panic!("Invalid nearest corner id: {}. Expected the corner triangle ID to be any of (0,1,2)", nearest_corner_id);
-                    }
-                }
-            } else {
-                match nearest_corner_id {
-                    0 => {
-                        rel_nearby_cells =
-                            array![[-1, 1], [0, 1], [1, 1], [-1, 0], [0, 0], [1, 0],];
-                    }
-                    1 => {
-                        rel_nearby_cells =
-                            array![[0, 0], [1, 0], [2, 0], [0, -1], [1, -1], [2, -1],];
-                    }
-                    2 => {
-                        rel_nearby_cells =
-                            array![[-2, 0], [-1, 0], [0, 0], [-2, -1], [-1, -1], [0, -1],];
-                    }
-                    _ => {
-                        panic!("Invalid nearest corner id: {}. Expected the corner triangle ID to be any of (0,1,2)", nearest_corner_id);
-                    }
-                }
-            }
-            // Insert ids into return array for current cell_id
-            nearby_cells
-                .slice_mut(s![cell_id, .., ..])
-                .assign(&(rel_nearby_cells + cell_ids.slice(s![cell_id, ..]))); // Try inserting slice?
-        }
-
-        nearby_cells
     }
 
     fn _is_cell_upright(&self, id_x: i64, id_y: i64) -> bool {
